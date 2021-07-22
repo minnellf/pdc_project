@@ -4,6 +4,7 @@ import glob
 import os
 import csv
 import sys
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 # tf.autograph.set_verbosity(3, True)
 import numpy as np
@@ -14,6 +15,7 @@ from datetime import datetime
 import model_libs
 import random
 import threading
+import time
 
 physical_devices = tf.config.list_physical_devices()
 #physical_devices = tf.config.list_physical_devices('GPU')
@@ -146,18 +148,32 @@ Individual = namedtuple('Individual', ['genome', 'fitness'])
 X_train_data, y_train_data = train_generator.get_data()
 X_val_data, y_val_data = val_generator.get_data()
 
+X_train_data_tf = tf.constant(X_train_data)
+y_train_data_tf = tf.constant(y_train_data)
+X_val_data_tf = tf.constant(X_val_data)
+y_val_data_tf = tf.constant(y_val_data)
+
 def fitness(clf):
 
+    start = time.time()
     clf.fit(
-      x = X_train_data,
-      y = y_train_data,
+      x = X_train_data_tf,
+      y = y_train_data_tf,
       batch_size = BATCH_SIZE,
       epochs = NUM_EPOCHS,
-      validation_data = (X_val_data, y_val_data),
+      validation_data = (X_val_data_tf, y_val_data_tf),
+      verbose=2,
       callbacks = callbacks
     )
 
-    loss, iou = clf.evaluate(val_generator)
+    loss, iou = clf.evaluate(
+        X_val_data_tf,
+        y_val_data_tf,
+        batch_size = BATCH_SIZE,
+        verbose = 2
+    )
+    end = time.time()
+    print("TIME ELAPSED %f s" % (end-start))
     return iou
 
 def new_individual():
@@ -184,6 +200,7 @@ report = list()
 GPU_DEVICES = tf.config.list_physical_devices('GPU')
 NUM_GPUS = len(GPU_DEVICES)
 
+print("CREATING STARTING POPULATION")
 population = [
     Individual(g, fitness(g)) for g in [
         new_individual() for _ in range(POP_SIZE)
@@ -216,6 +233,7 @@ with open('perf_evolve.csv', mode='w') as csv_file:
     csv_writer = csv.writer(csv_file, delimiter=',')
     csv_writer.writerow([str(i.fitness) for i in population])
     for generation in range(NUM_GENERATIONS):
+        print("GENERATION %d" % generation)
         offspring = list()
         eval_threads = [offspring_thread(o, "Thread-" + str(o), o) for o in range(OFFSPRING_SIZE)]
         for o in range(OFFSPRING_SIZE):

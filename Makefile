@@ -7,11 +7,11 @@ export BATCH_SIZE = 64
 export MODEL_NAME = model_0
 export NUM_EPOCHS = 1000
 
+prepare_data:
+	sbatch scripts/prepare_data.sbatch
+
 train:
 	python py/train.py
-
-train_opt:
-	python py/train_opt_thread.py
 
 train_cluster:
 	sbatch scripts/train.sbatch

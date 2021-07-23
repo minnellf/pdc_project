@@ -77,23 +77,6 @@ LOAD_MODEL = int(os.getenv('LOAD_MODEL'))
 #os.makedirs('./'+log_dir, exist_ok=True)
 
 callbacks = []
-#callbacks = [
-#  tf.keras.callbacks.EarlyStopping(
-#    # Stop training when `val_loss` is no longer improving
-#    monitor="val_iou_metric",
-#    # "no longer improving" being defined as "no better than 1e-2 less"
-#    min_delta=0.001,
-#    # "no longer improving" being further defined as "for at least 2 epochs"
-#    patience=5,
-#    verbose=1,
-#    mode='max'
-#  ),
-#  tf.keras.callbacks.ModelCheckpoint(
-#    filepath=filepath,
-#    monitor='val_iou_metric',
-#    save_best_only=False
-#  )
-#]
 
 #callbacks = [
 #  tf.keras.callbacks.ModelCheckpoint(
@@ -153,7 +136,19 @@ y_train_data_tf = tf.constant(y_train_data)
 X_val_data_tf = tf.constant(X_val_data)
 y_val_data_tf = tf.constant(y_val_data)
 
-def fitness(clf):
+def fitness(clf, NUM_EPOCHS, filepath=None):
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    if filepath != None:
+        callbacks = [
+          tf.keras.callbacks.ModelCheckpoint(
+            filepath=filepath,
+            monitor='accuracy',
+            save_best_only=True
+          )
+        ]
+    else:
+        callbacks = []
 
     start = time.time()
     clf.fit(
@@ -166,7 +161,10 @@ def fitness(clf):
       callbacks = callbacks
     )
 
-    loss, iou = clf.evaluate(
+    if filepath != None:
+        clf.load_weights(filepath)
+
+    loss, accuracy = clf.evaluate(
         X_val_data_tf,
         y_val_data_tf,
         batch_size = BATCH_SIZE,
@@ -174,7 +172,7 @@ def fitness(clf):
     )
     end = time.time()
     print("TIME ELAPSED %f s" % (end-start))
-    return iou
+    return accuracy
 
 def new_individual():
     return utils_training.model_encaps(
@@ -195,6 +193,11 @@ def mutation(parent):
     )
     return genome
 
+def copy_parent(parent):
+    genome = utils_training.model_encaps(tf.keras.models.clone_model(parent.genome))
+    genome.set_weights(parent.genome.get_weights())
+    return genome
+
 report = list()
 
 GPU_DEVICES = tf.config.list_physical_devices('GPU')
@@ -202,7 +205,7 @@ NUM_GPUS = len(GPU_DEVICES)
 
 print("CREATING STARTING POPULATION")
 population = [
-    Individual(g, fitness(g)) for g in [
+    Individual(g, fitness(g, NUM_EPOCHS, "./checkpoint/partial.hdf5")) for g in [
         new_individual() for _ in range(POP_SIZE)
     ]
 ]
@@ -211,6 +214,7 @@ population = sorted(population, key=lambda i: i.fitness)
 report.append(population[0].fitness)
 
 threadLock = [threading.Lock() for i in range(NUM_GPUS)]
+threadLockPop = threading.Lock()
 
 class offspring_thread(threading.Thread):
     def __init__(self, threadID, name, counter):
@@ -220,13 +224,17 @@ class offspring_thread(threading.Thread):
         self.counter = counter
     def run(self):
         threadLock[self.threadID % NUM_GPUS].acquire()
-        if (np.random.rand(1) < -1):
-            parent1 = random.choice(population)
-            parent2 = random.choice(population)
+        if (np.random.rand(1) < 0.2):
+            parent = random.choice(population)
+            genome = copy_parent(parent)
         else:
             parent = random.choice(population)
             genome = mutation(parent)
-            offspring.append(Individual(genome=genome, fitness=fitness(genome)))
+        filepath = "./checkpoint/partial%d.hdf5" % self.threadID
+        fitness_ind = fitness(genome, NUM_EPOCHS, filepath)
+        threadLockPop.acquire()
+        population.append(Individual(genome=genome, fitness=fitness_ind))
+        threadLockPop.release()
         threadLock[self.threadID % NUM_GPUS].release()
 
 with open('perf_evolve.csv', mode='w') as csv_file:
@@ -234,13 +242,12 @@ with open('perf_evolve.csv', mode='w') as csv_file:
     csv_writer.writerow([str(i.fitness) for i in population])
     for generation in range(NUM_GENERATIONS):
         print("GENERATION %d" % generation)
-        offspring = list()
         eval_threads = [offspring_thread(o, "Thread-" + str(o), o) for o in range(OFFSPRING_SIZE)]
         for o in range(OFFSPRING_SIZE):
             eval_threads[o].start()
         for o in range(OFFSPRING_SIZE):
             eval_threads[o].join()
-        population = sorted(offspring, key=lambda i: i.fitness)[:POP_SIZE]
+        population = sorted(population, key=lambda i: i.fitness, reverse=True)[:POP_SIZE]
         report.append(population[0].fitness)
         csv_writer.writerow([str(i.fitness) for i in population])
 

@@ -139,11 +139,13 @@ y_val_data_tf = tf.constant(y_val_data)
 def fitness(clf, NUM_EPOCHS, filepath=None):
     if os.path.exists(filepath):
         os.remove(filepath)
+
     if filepath != None:
         callbacks = [
           tf.keras.callbacks.ModelCheckpoint(
             filepath=filepath,
-            monitor='accuracy',
+            monitor='val_accuracy',
+            mode='max',
             save_best_only=True
           )
         ]
@@ -162,6 +164,7 @@ def fitness(clf, NUM_EPOCHS, filepath=None):
     )
 
     if filepath != None:
+        print("LOADING BEST WEIGHTS")
         clf.load_weights(filepath)
 
     loss, accuracy = clf.evaluate(
